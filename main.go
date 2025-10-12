@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,11 +30,22 @@ func main() {
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
+		if r.URL.Path == "/" {
+			fmt.Fprintln(w, "Welcome to Shortie, Shortie!")
+			return
+		}
+		code := strings.TrimPrefix(r.URL.Path, "/")
+		if code == "" || strings.Contains(code, "/") {
 			http.NotFound(w, r)
 			return
 		}
-		fmt.Fprintln(w, "Welcome to Shortie, Shortie!")
+
+		target, ok := store.get(code)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 	})
 
 	mux.HandleFunc("/shorten", func(w http.ResponseWriter, r *http.Request) {
@@ -54,17 +66,16 @@ func main() {
 		}
 
 		var code string
-		var err error
-		for range 5 {
-			code, err = newCode(7)
+		for i := 0; i < 5; i++ {
+			c, err := newCode(7)
 			if err != nil {
 				srvErr(w)
 				return
 			}
-			if !store.exists(code) {
+			if !store.exists(c) {
+				code = c
 				break
 			}
-			code = ""
 		}
 		if code == "" {
 			srvErr(w)
@@ -78,6 +89,7 @@ func main() {
 			"shortUrl": baseURL + "/" + code,
 		})
 	})
+
 	server := &http.Server{
 		Addr:              ":" + port,
 		Handler:           mux,
@@ -106,6 +118,13 @@ func (s *memStore) exists(code string) bool {
 	defer s.mu.RUnlock()
 	_, ok := s.m[code]
 	return ok
+}
+
+func (s *memStore) get(code string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u, ok := s.m[code]
+	return u, ok
 }
 
 func getenv(k, def string) string {
@@ -145,7 +164,7 @@ const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 func newCode(n int) (string, error) {
 	b := make([]byte, n)
 	max := big.NewInt(int64(len(alphabet)))
-	for i := range n {
+	for i := 0; i < n; i++ {
 		x, err := rand.Int(rand.Reader, max)
 		if err != nil {
 			return "", err
